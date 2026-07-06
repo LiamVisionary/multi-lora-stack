@@ -24,19 +24,19 @@ app.registerExtension({
     name: "MultiLoRAStack",
     
     async beforeRegisterNodeDef(nodeType, nodeData, app) {
-        if (nodeData.name === "MultiLoRAStack") {
-            console.log("Registering MultiLoRAStack node");
+        if (nodeData.name === "MultiLoRAStack" || nodeData.name === "MultiLoRAStackToPreLora") {
+            console.log(`Registering ${nodeData.name} node`);
             
             const onNodeCreated = nodeType.prototype.onNodeCreated;
             nodeType.prototype.onNodeCreated = async function () {
-                console.log("MultiLoRAStack node created");
+                console.log(`${nodeData.name} node created`);
                 
                 const result = onNodeCreated?.apply(this, arguments);
                 
                 // Set wider default size
                 this.size = [450, 300];
                 
-                // Initialize node data
+                // Initialize node data from any saved lora_stack JSON before adding defaults.
                 this.loraData = [];
                 this.availableLoras = await getAvailableLoras();
                 
@@ -49,43 +49,61 @@ app.registerExtension({
                     this.toggleAllLoRAs();
                 });
                 
-                // Add initial LoRA
-                this.addLoRA();
+                const savedLoras = this.getSavedLoRAStack();
+                if (savedLoras.length) {
+                    savedLoras.forEach((config) => this.addLoRA(config));
+                } else {
+                    this.addLoRA();
+                }
                 
                 return result;
             };
             
             // Add methods to the node prototype
-            nodeType.prototype.addLoRA = function() {
+            nodeType.prototype.getSavedLoRAStack = function() {
+                const stackWidget = this.widgets?.find(w => w.name === "lora_stack");
+                if (!stackWidget || typeof stackWidget.value !== "string" || !stackWidget.value.trim()) {
+                    return [];
+                }
+                try {
+                    const parsed = JSON.parse(stackWidget.value);
+                    return Array.isArray(parsed) ? parsed.filter(item => item && typeof item === "object") : [];
+                } catch (error) {
+                    console.warn("Could not parse saved lora_stack:", error);
+                    return [];
+                }
+            };
+
+            nodeType.prototype.addLoRA = function(config = {}) {
                 const index = this.loraData.length;
                 console.log(`Adding LoRA ${index + 1}`);
                 
                 // Add LoRA data
                 this.loraData.push({
-                    on: true,
-                    lora: "None",
-                    strength: 1.0
+                    on: config.on ?? true,
+                    lora: config.lora || "None",
+                    strength: Number.isFinite(Number(config.strength)) ? Number(config.strength) : 1.0
                 });
                 
                 // Create widgets for this LoRA
-                const enableWidget = this.addWidget("toggle", `Enable LoRA ${index + 1}`, true, (value) => {
+                const enableWidget = this.addWidget("toggle", `Enable LoRA ${index + 1}`, this.loraData[index].on, (value) => {
                     this.loraData[index].on = value;
                     this.updateLoraStack();
                 });
                 
-                const loraWidget = this.addWidget("combo", `LoRA ${index + 1}`, "None", (value) => {
+                const loraWidget = this.addWidget("combo", `LoRA ${index + 1}`, this.loraData[index].lora, (value) => {
                     this.loraData[index].lora = value;
                     this.updateLoraStack();
                 }, {
                     values: this.availableLoras
                 });
                 
-                const strengthWidget = this.addWidget("number", `Strength ${index + 1}`, 1.0, (value) => {
+                const strengthWidget = this.addWidget("number", `Strength ${index + 1}`, this.loraData[index].strength, (value) => {
                     this.loraData[index].strength = value;
                     this.updateLoraStack();
                 }, {
-                    min: -2.0,
-                    max: 2.0,
+                    min: -100000.0,
+                    max: 100000.0,
                     step: 0.1
                 });
                 
